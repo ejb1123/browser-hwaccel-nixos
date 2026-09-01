@@ -77,12 +77,20 @@ let
     # no effect on other vendors, and on its own it does not make NVENC work --
     # see docs/nvenc.md.
     ++ optional (cfg.vendor == "nvidia") "VaapiOnNvidiaGPUs"
-    # Repeating this is not redundant. The nixpkgs chromium wrapper emits its own
-    # --enable-features=WaylandWindowDecorations earlier on the exec line, and
-    # Chromium does NOT merge duplicate --enable-features switches:
-    # base::CommandLine returns the LAST occurrence. Omit it here and the flags
-    # below silently strip server-side window decorations under Wayland.
+    # Repeating these is not redundant. Chromium does NOT merge duplicate
+    # --enable-features switches -- base::CommandLine returns the LAST
+    # occurrence -- and the nixpkgs wrappers emit their own earlier on the exec
+    # line. Ours comes last, so anything the wrapper set and we do not repeat is
+    # silently deleted.
+    #
+    # chromium emits: WaylandWindowDecorations
+    # brave emits:    AcceleratedVideoDecodeLinuxGL, AcceleratedVideoEncoder,
+    #                 WaylandWindowDecorations
+    #
+    # Brave is the cautionary case: omit its two and you strip the very video
+    # acceleration you installed this module for.
     ++ optional cfg.chromium.preserveWaylandDecorations "WaylandWindowDecorations"
+    ++ cfg.chromium.preserveFeatures
     ++ cfg.chromium.extraFeatures;
 
   chromiumFlags =
@@ -372,6 +380,32 @@ in
           already passed one containing `WaylandWindowDecorations`. Dropping it
           here removes server-side window decorations under Wayland -- a
           confusing, seemingly unrelated regression.
+        '';
+      };
+
+      preserveFeatures = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [
+          "AcceleratedVideoDecodeLinuxGL"
+          "AcceleratedVideoEncoder"
+        ];
+        description = ''
+          Feature names your browser's own wrapper already passes, which must be
+          repeated here so they survive.
+
+          Chromium takes the *last* `--enable-features` switch on the command
+          line rather than merging them, and this module's switch comes last.
+          Anything the packaged wrapper set and you do not repeat is silently
+          dropped.
+
+          **Brave needs this.** Its wrapper passes
+          `AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,WaylandWindowDecorations`,
+          so leaving this empty removes Brave's own video acceleration. Set it to
+          the first two (this module re-adds the third for you).
+
+          Run `browser-hwaccel-check`; it inspects the built wrapper and reports
+          any feature that gets clobbered.
         '';
       };
 

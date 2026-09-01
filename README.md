@@ -51,7 +51,46 @@ is what `browser-hwaccel-check` is for.
   ([docs/nvenc.md](docs/nvenc.md)). Upstream is decode-only; this adds an encode
   path. It is a work in progress and labelled as such.
 
-## Start here
+## Not on NixOS? Just run the browser
+
+You don't need the module, or a system rebuild, or NixOS. Any distro with Nix
+installed:
+
+```console
+$ nix run github:ejb1123/browser-hwaccel-nixos#chromium
+$ nix run github:ejb1123/browser-hwaccel-nixos#brave
+$ nix run github:ejb1123/browser-hwaccel-nixos#ungoogled-chromium
+```
+
+These detect your GPU **when they start**, which is the one thing the NixOS
+module fundamentally cannot do — Nix evaluates on the build machine, and a build
+machine can't see your PCI bus. The launcher runs on your machine, so it just
+looks.
+
+It picks the GPU driving your displays when that GPU can do video (the safe
+case), falls back to another only when it has to, and warns you when it does.
+See what it decided without launching anything:
+
+```console
+$ HWACCEL_VERBOSE=1 HWACCEL_PRINT_ONLY=1 nix run github:ejb1123/browser-hwaccel-nixos#chromium
+[hwaccel] using system VA-API drivers (/run/opengl-driver) with bundled fallback
+[hwaccel] display GPU 0000:01:00.0 has VA-API; using it (no device override needed)
+```
+
+| variable | |
+|---|---|
+| `HWACCEL_VERBOSE=1` | explain what it detected |
+| `HWACCEL_PRINT_ONLY=1` | print the flags, don't launch |
+| `HWACCEL_PCI=0000:00:02.0` | force a specific GPU |
+| `HWACCEL_NO_DECODE=1` | drop hardware video if it's crashing (kills encode too — see [hybrid-gpu.md](docs/hybrid-gpu.md)) |
+| `HWACCEL_NO_ENCODE=1` | decode only |
+
+**Caveat, stated plainly:** this is verified on NixOS. On other distros the
+VA-API side should work — libva talks to `/dev/dri` directly and the drivers are
+bundled — but a Nix-built browser may still need [nixGL](https://github.com/nix-community/nixGL)
+for OpenGL, which is a separate problem from video acceleration. Reports welcome.
+
+## On NixOS: start here
 
 Run the check first. It will tell you which vendor to set and whether you need
 `pciAddress` at all:
@@ -69,6 +108,7 @@ Then pick the example that matches:
 | Intel iGPU + NVIDIA, displays on NVIDIA | [`examples/hybrid-intel-nvidia.nix`](examples/hybrid-intel-nvidia.nix) |
 | NVIDIA only, decode | [`examples/nvidia.nix`](examples/nvidia.nix) |
 | NVIDIA, experimental encode | [`examples/nvidia-nvenc.nix`](examples/nvidia-nvenc.nix) |
+| Brave / Vivaldi / Edge / Chrome | [`examples/brave.nix`](examples/brave.nix) |
 
 ## Set expectations before you start
 

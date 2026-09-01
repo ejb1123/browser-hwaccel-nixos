@@ -45,12 +45,49 @@
         };
       };
 
-      packages = forAllSystems (pkgs: rec {
-        browser-hwaccel-check = pkgs.callPackage ./pkgs/browser-hwaccel-check { };
-        nvidia-vaapi-driver-nvenc = pkgs.callPackage ./pkgs/nvidia-vaapi-driver-nvenc {
-          src = nvencSrc;
+      packages = forAllSystems (
+        pkgs:
+        let
+          # Runtime-configured launchers. Unlike the NixOS module these detect
+          # the GPU when they start, so they work on any distro with Nix and
+          # need no system rebuild.
+          runner = browser: binaryName: pkgs.callPackage ./pkgs/hwaccel-run { inherit browser binaryName; };
+        in
+        rec {
+          browser-hwaccel-check = pkgs.callPackage ./pkgs/browser-hwaccel-check { };
+          nvidia-vaapi-driver-nvenc = pkgs.callPackage ./pkgs/nvidia-vaapi-driver-nvenc {
+            src = nvencSrc;
+          };
+
+          chromium = runner pkgs.chromium "chromium";
+          ungoogled-chromium = runner pkgs.ungoogled-chromium "chromium";
+          brave = runner pkgs.brave "brave";
+
+          default = browser-hwaccel-check;
+        }
+      );
+
+      apps = forAllSystems (pkgs: {
+        default = {
+          type = "app";
+          program = "${
+            self.packages.${pkgs.stdenv.hostPlatform.system}.browser-hwaccel-check
+          }/bin/browser-hwaccel-check";
         };
-        default = browser-hwaccel-check;
+        chromium = {
+          type = "app";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.chromium}/bin/chromium-hwaccel";
+        };
+        ungoogled-chromium = {
+          type = "app";
+          program = "${
+            self.packages.${pkgs.stdenv.hostPlatform.system}.ungoogled-chromium
+          }/bin/chromium-hwaccel";
+        };
+        brave = {
+          type = "app";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.brave}/bin/brave-hwaccel";
+        };
       });
 
       devShells = forAllSystems (pkgs: {
@@ -106,6 +143,7 @@
           example-amd = evalExample "amd" ./examples/amd.nix;
           example-nvidia = evalExample "nvidia" ./examples/nvidia.nix;
           example-nvidia-nvenc = evalExample "nvidia-nvenc" ./examples/nvidia-nvenc.nix;
+          example-brave = evalExample "brave" ./examples/brave.nix;
         }
         // {
           inherit (self.packages.${system}) browser-hwaccel-check;

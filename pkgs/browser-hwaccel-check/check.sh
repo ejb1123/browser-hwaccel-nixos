@@ -183,29 +183,75 @@ fi
 title "5. Browser configuration"
 ##############################################################################
 
-if command -v chromium >/dev/null 2>&1; then
-  wrapper=$(readlink -f "$(command -v chromium)")
+# Any Chromium-family launcher on PATH, not just "chromium".
+CHROMIUM_BIN=""
+for c in chromium chromium-browser brave vivaldi microsoft-edge google-chrome-stable chrome; do
+  if command -v "$c" >/dev/null 2>&1; then CHROMIUM_BIN="$c"; break; fi
+done
+
+if [ -n "$CHROMIUM_BIN" ]; then
+  wrapper=$(readlink -f "$(command -v "$CHROMIUM_BIN")")
+  note "inspecting: $CHROMIUM_BIN"
   args=$(grep -o -- '--[a-z0-9-]*[^ "]*' "$wrapper" 2>/dev/null | tr '\n' ' ')
 
-  if echo "$args" | grep -q 'hardware-video-device-path'; then
-    ok "chromium: --hardware-video-device-path is set"
-    note "$(echo "$args" | tr ' ' '\n' | grep hardware-video-device-path)"
-  else
-    note "chromium: no --hardware-video-device-path (fine on a single-GPU machine)"
+  # Chromium takes the LAST --enable-features switch rather than merging them.
+  # If a launcher passes more than one, everything named only in the earlier
+  # ones is silently discarded -- which is how Brave loses its own video
+  # acceleration when a second switch is appended.
+  featline=$(grep -o -- '--enable-features=[^ "]*' "$wrapper" 2>/dev/null || true)
+  featcount=$(printf '%s\n' "$featline" | grep -c . || true)
+
+  # Feature names can be followed by shell substitutions in these wrappers
+  # (${NIXOS_OZONE_WL:+...}); cut each token at the first '$' before cleaning it,
+  # or the substitution ends up glued onto the feature name.
+  clean_features() {
+    sed 's/--enable-features=//' | tr ',' '\n' | sed 's/\$.*//; s/[^A-Za-z0-9_]//g' \
+      | grep -v '^$' | sort -u
+  }
+  WINFEAT=",$(printf '%s\n' "$featline" | tail -1 | clean_features | tr '\n' ',')"
+
+  if [ "${featcount:-0}" -gt 1 ]; then
+    winner="$WINFEAT"
+    losers=$(printf '%s\n' "$featline" | head -n -1 | clean_features)
+    dropped=""
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      case "$winner" in
+        *",$f,"*) : ;;
+        *) dropped="$dropped $f" ;;
+      esac
+    done <<<"$losers"
+    if [ -n "$dropped" ]; then
+      bad "$CHROMIUM_BIN passes $featcount --enable-features switches; only the last applies"
+      note "these features are being SILENTLY DROPPED:"
+      for f in $dropped; do note "    $f"; done
+      note ""
+      note "Add them to hardware.browserHwaccel.chromium.preserveFeatures so the"
+      note "final switch repeats them."
+    else
+      ok "$CHROMIUM_BIN: $featcount --enable-features switches, none clobbered"
+    fi
   fi
 
-  if echo "$args" | grep -q 'AcceleratedVideoEncoder'; then
-    ok "chromium: AcceleratedVideoEncoder is enabled"
+  if echo "$args" | grep -q 'hardware-video-device-path'; then
+    ok "$CHROMIUM_BIN: --hardware-video-device-path is set"
+    note "$(echo "$args" | tr ' ' '\n' | grep hardware-video-device-path)"
   else
-    warn "chromium: AcceleratedVideoEncoder not enabled -- encode will use the CPU"
+    note "$CHROMIUM_BIN: no --hardware-video-device-path (fine on a single-GPU machine)"
+  fi
+
+  if [ "${WINFEAT#*,AcceleratedVideoEncoder,}" != "$WINFEAT" ]; then
+    ok "$CHROMIUM_BIN: AcceleratedVideoEncoder is enabled"
+  else
+    warn "$CHROMIUM_BIN: AcceleratedVideoEncoder not enabled -- encode will use the CPU"
   fi
 
   if echo "$args" | grep -q 'render-node-override'; then
-    note "chromium: --render-node-override present. It is the older, lower-priority"
+    note "$CHROMIUM_BIN: --render-node-override present. It is the older, lower-priority"
     note "switch; --hardware-video-device-path is consulted first and wins."
   fi
 else
-  note "chromium not on PATH -- skipping"
+  note "no Chromium-family browser on PATH -- skipping"
 fi
 
 echo
