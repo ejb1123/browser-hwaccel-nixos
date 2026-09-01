@@ -93,6 +93,11 @@ let
     optional (renderNode != null) "--hardware-video-device-path=${renderNode}"
     ++ optional (chromiumFeatures != [ ]) "--enable-features=${concatStringsSep "," chromiumFeatures}"
     ++ optional cfg.chromium.ignoreGpuBlocklist "--ignore-gpu-blocklist"
+    # Measured, not assumed: this switch takes down the whole VA-API stack, not
+    # decode alone. With it set, chrome://gpu reports zero encode entries. See
+    # the assertion below -- decode = false and encode = true cannot both hold
+    # on Chromium.
+    ++ optional (!cfg.decode) "--disable-accelerated-video-decode"
     ++ cfg.chromium.extraFlags;
 
   chromiumPackage = cfg.chromium.package.override {
@@ -474,6 +479,22 @@ in
         message = "hardware.browserHwaccel.nvenc.enable requires vendor = \"nvidia\".";
       }
       {
+        assertion = !(wantsChromium && cfg.encode && !cfg.decode);
+        message = ''
+          hardware.browserHwaccel: encode = true with decode = false is not
+          achievable on Chromium.
+
+          Disabling decode requires --disable-accelerated-video-decode, and that
+          switch disables the entire VA-API stack -- measured on Chromium 152,
+          chrome://gpu then lists no encode entries at all. There is no flag that
+          keeps hardware encode while turning hardware decode off.
+
+          Either accept hardware decode (decode = true), or drop Chromium from
+          `browsers` and keep this combination for Firefox, where the two prefs
+          are genuinely independent.
+        '';
+      }
+      {
         assertion = !(cfg.videoDevice != null && cfg.pciAddress != null);
         message = ''
           Set only one of hardware.browserHwaccel.pciAddress or .videoDevice.
@@ -492,7 +513,22 @@ in
       ++ lib.optional (cfg.vendor == "nvidia" && cfg.nvenc.enable) ''
         hardware.browserHwaccel: the NVENC fork is experimental and replaces
         nvidia-vaapi-driver system-wide. Reference-frame management and packed
-        headers are unfinished; expect WebRTC simulcast to misbehave.
+        headers are unfinished; expect WebRTC simulcast to misbehave, and
+        encode throughput is roughly 6x slower than software pending the
+        zero-copy input path. See docs/nvenc.md.
+      ''
+      ++ lib.optional (renderNode != null && cfg.decode && wantsChromium) ''
+        hardware.browserHwaccel: you have pinned a video device AND left
+        hardware decode on. If the GPU you pinned is not the one driving your
+        displays, decoded NV12 frames have to be imported across GPUs, and on at
+        least one measured system that fails outright:
+
+            gbm_bo_import -> "Cannot create bo with format=(Y_UV, 420, ...)"
+
+        Chromium's GPU process then crashes, and after three crashes it disables
+        accelerated video encode AND decode for the rest of the session. Run
+        `browser-hwaccel-check` and read docs/hybrid-gpu.md before relying on
+        this. Prefer putting video on the same GPU that drives your displays.
       '';
 
     hardware.graphics = {

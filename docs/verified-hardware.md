@@ -48,9 +48,21 @@ Two details from the dump worth carrying forward:
   to software, so a WebRTC simulcast ladder uses hardware for the large layer and
   the CPU for small ones. Partial, not all-or-nothing. Decode goes down to 16×16.
 
-**NVIDIA RTX 3080 with the NVENC fork — encode confirmed.** H.264 baseline/main/
-high in `chrome://gpu`, WebCodecs output pixel-verified, `ffmpeg -vaapi` SSIM
-0.9998. Caveats in [nvenc.md](nvenc.md).
+**But hardware decode on the Intel iGPU is not usable on this machine.** With
+video pinned to the iGPU and the compositor on the NVIDIA card, a page that
+decodes H.264 crashes Chromium's GPU process three times in 35 seconds
+(`gbm_bo_import` failing on `(Y_UV, 420, 8unorm, ExtSamplerOn)`), after which
+Chromium disables accelerated video encode *and* decode for the session. Full
+numbers and the configurations tried in [hybrid-gpu.md](hybrid-gpu.md).
+
+**NVIDIA RTX 3080 with the NVENC fork — the configuration that actually works
+here.** Video and compositor on the same GPU: zero GPU-process crashes across
+H.264, HEVC and OBS-ingested streams, H.264 baseline/main/high encode, and decode
+covering h264, vp8, vp9 0/2, hevc main/main10/still **and av1** — the last two of
+which the UHD 630 cannot do at any speed.
+
+Encode is correct but slow: 39.5 ms/frame at 720p, ~6× slower than software,
+bound by the fork's device→host→device input path. Caveats in [nvenc.md](nvenc.md).
 
 ## Untested
 

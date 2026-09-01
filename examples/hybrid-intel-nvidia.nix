@@ -19,9 +19,14 @@
     ];
   };
 
-  # Worth knowing: pinning the device moves *decode* to the Intel GPU as well --
-  # the setting is not encode-only. Decoded frames then land on a different GPU
-  # from the compositor, costing a cross-GPU copy per frame. If playback picks up
-  # stutter or artefacts after this change, that is the cause, and
-  # `decode = false;` keeps hardware encode while handing playback back to the CPU.
+  # WARNING, measured rather than assumed: pinning the device moves *decode* to
+  # the Intel GPU too -- the setting is not encode-only. Decoded NV12 frames then
+  # have to be imported by a compositor living on the other GPU, and on the test
+  # machine that fails: gbm_bo_import errors, three GPU-process crashes, and then
+  # Chromium disables accelerated video encode AND decode for the whole session.
+  #
+  # There is no way to keep encode and drop decode on Chromium -- see
+  # docs/hybrid-gpu.md for the numbers. If you hit this, the fix is to run video
+  # on the same GPU that drives your displays (examples/nvidia-nvenc.nix), not to
+  # tune flags.
 }

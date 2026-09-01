@@ -87,6 +87,14 @@ capability list off the hardware rather than guessing from the model name.
 encode on the CPU while the full-size layer uses the GPU. Seeing both is correct
 behaviour, not a broken configuration.
 
+**On hybrid machines, prefer the GPU that drives your displays.** Pinning video
+to a *different* GPU is what makes VA-API visible at all — but it also means
+every decoded frame crosses GPUs, and on at least one measured system that
+crashes Chromium's GPU process until it disables hardware video entirely. There
+is no flag that keeps encode while dropping decode. Same-GPU video costs you
+codecs; cross-GPU video can cost you the whole feature.
+[docs/hybrid-gpu.md](docs/hybrid-gpu.md) has the measurements.
+
 ## Options
 
 Full descriptions live in [`modules/browser-hwaccel.nix`](modules/browser-hwaccel.nix).

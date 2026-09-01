@@ -38,6 +38,7 @@ client, not just browsers.
 | `ffmpeg -vaapi` | ✅ SSIM 0.9998 vs source |
 | Chromium WebCodecs `VideoEncoder` | ✅ pixel-verified output |
 | Rate control (CBR / VBR / CQP), bitrate, framerate, GOP | ✅ honoured |
+| Non-16-aligned sizes (1080p, 1600×900, 1366×768) | ✅ since `739bd6d` — see below |
 | AV1 encode | ❌ absent — correctly, Ampere has no AV1 encoder |
 
 The SSIM number matters more than "it produced a file". A wrong NV12 layout or
@@ -46,6 +47,48 @@ garbage. 0.9998 says the pixel path is right, not just the syntax.
 
 Verified on an RTX 3080 (GA102), driver 595.91.07, open kernel module,
 `NVD_BACKEND=direct`.
+
+### Encode throughput is currently poor
+
+Measured in Chromium 152 via WebCodecs, H.264, 120 frames, RTX 3080:
+
+| Resolution | NVENC fork | software | Intel UHD 630 for comparison |
+|---|---|---|---|
+| 640×480 | 17.3 ms/frame | 2.8 | 2.0 |
+| 1280×720 | 39.5 ms/frame | 6.4 | 4.6 |
+| 1920×1080 | 78.4 ms/frame | 12.2 | 8.0 |
+
+That is roughly **6× slower than software** and **8× slower than a 2017 Intel
+iGPU**. Cost per megapixel is near-constant (55.8 → 43.0 → 37.9 ms/MPix), which
+is the signature of a copy-bound path rather than an encode-bound one — a 3080's
+NVENC should do 720p in 2–3 ms/frame.
+
+The cause is the input path below: device → host → device with a CPU repack per
+frame. Until that is fixed, 1080p encodes correctly but only at ~13 fps, so this
+is not yet usable for real-time 1080p30.
+
+### The 16-alignment bug (fixed)
+
+Worth recording because the symptom pointed nowhere near the cause. Chromium
+creates the VA encode context with **16-aligned** dimensions but hands the driver
+surfaces at the **real** frame size, so 1920×1080 arrives as a 1080-row buffer for
+an encoder built at 1088. `nvencUploadNV12` validated and copied against
+`enc->height` and rejected every frame:
+
+```
+NVENC: upload too small: 3110400 < 3133440     (1920*1080*3/2 vs 1920*1088*3/2)
+```
+
+Every size whose width *or* height was not a multiple of 16 failed — 1920×1080,
+1600×900, 1366×768 — while 1920×1088, 1600×896 and 1344×768 worked. Eight extra
+rows flipped 1080p from broken to working, which is what identified it as
+alignment rather than a size limit.
+
+Fixed by taking the source geometry explicitly, deriving the chroma plane offset
+from it (the old offset read past the end of the buffer), and padding the
+alignment rows and columns by replicating the last real pixel. Verified by
+encoding a known pattern in hardware and decoding it in software: MAE 8.1 at
+every size, identical to the 1280×720 case that always worked.
 
 ## What does not work
 
@@ -64,7 +107,9 @@ two models do not fully map onto each other, and closing the gap is a design
 problem, not a missing function.
 
 **Input path.** Frames go device → host → device. `nvEncRegisterResource` would
-remove two copies per frame. Correctness first.
+remove two copies per frame. Correctness first — but see the throughput table
+above: this is now the single biggest problem with the fork, costing roughly 6×
+versus software and making 1080p30 real-time encode unreachable.
 
 ### What that means in practice
 
@@ -109,9 +154,10 @@ a real client; `ffmpeg` never exposed it.
 - [x] Encode real frames (`ffmpeg -vaapi`, SSIM-verified)
 - [x] Chromium acceptance (WebCodecs, pixel-verified)
 - [x] Rate control, framerate, GOP
+- [x] Non-16-aligned frame sizes (1080p, 1600×900, 1366×768)
+- [ ] **Zero-copy input via `nvEncRegisterResource`** — the throughput blocker
 - [ ] Honour client packed headers (`disableSPSPPS` + header insertion)
 - [ ] Explicit picture types and reference management — unblocks simulcast
-- [ ] Zero-copy input via `nvEncRegisterResource`
 - [ ] Upstream discussion with `elFarto/nvidia-vaapi-driver`
 
 Issues and patches welcome, particularly on the reference-management design —
