@@ -50,12 +50,22 @@ for card in /sys/class/drm/card*; do
   fi
 done
 
-# Does a node offer VA-API at all? Empty output means no usable driver.
-has_vaapi() {
-  env -u LIBVA_DRIVER_NAME -u NVD_BACKEND vainfo \
-    --display drm --device "/dev/dri/by-path/pci-$1-render" 2>/dev/null \
-    | grep -q 'VAEntrypoint'
+# Probe a node once and cache the counts. VAINFO_DEC / VAINFO_ENC are how many
+# decode / encode entrypoints the driver offers for that device.
+VAINFO_DEC=0
+VAINFO_ENC=0
+VAINFO_DRV=""
+probe_vaapi() {
+  local out
+  out=$(env -u LIBVA_DRIVER_NAME -u NVD_BACKEND vainfo \
+    --display drm --device "/dev/dri/by-path/pci-$1-render" 2>/dev/null)
+  [ -z "$out" ] && { VAINFO_DEC=0; VAINFO_ENC=0; VAINFO_DRV=""; return 1; }
+  VAINFO_DEC=$(printf '%s\n' "$out" | grep -c 'VAEntrypointVLD')
+  VAINFO_ENC=$(printf '%s\n' "$out" | grep -cE 'VAEntrypointEnc')
+  VAINFO_DRV=$(printf '%s\n' "$out" | grep -m1 'Driver version' | sed 's/.*: //')
+  [ "$VAINFO_DEC" -gt 0 ] || [ "$VAINFO_ENC" -gt 0 ]
 }
+has_vaapi() { probe_vaapi "$1"; }
 
 TARGET_PCI=""
 if [ -n "${HWACCEL_PCI:-}" ]; then
@@ -81,7 +91,38 @@ else
 fi
 
 ##############################################################################
-# 3. Assemble flags
+# 3. Report what you are actually going to get
+##############################################################################
+# Always printed, not just under HWACCEL_VERBOSE. Without this the only clue
+# that encode fell back to the CPU is [OpenH264] lines buried in the browser's
+# stderr, which is not something anyone should have to interpret.
+USED_PCI="${TARGET_PCI:-$ACTIVE_PCI}"
+if [ -n "$USED_PCI" ] && probe_vaapi "$USED_PCI"; then
+  printf '[hwaccel] %s (%s): %s decode, %s encode entrypoint(s)\n' \
+    "$USED_PCI" "${VAINFO_DRV:-unknown driver}" "$VAINFO_DEC" "$VAINFO_ENC" >&2
+  if [ "$VAINFO_DEC" -gt 0 ]; then
+    printf '[hwaccel] hardware DECODE: available\n' >&2
+  else
+    printf '[hwaccel] hardware DECODE: NOT available -- video playback will use the CPU\n' >&2
+  fi
+  if [ "${HWACCEL_NO_ENCODE:-0}" = 1 ]; then
+    printf '[hwaccel] hardware ENCODE: disabled by HWACCEL_NO_ENCODE\n' >&2
+  elif [ "$VAINFO_ENC" -gt 0 ]; then
+    printf '[hwaccel] hardware ENCODE: available\n' >&2
+  else
+    printf '[hwaccel] hardware ENCODE: NOT available -- this driver offers no encoder.\n' >&2
+    printf '[hwaccel]   WebRTC calls and screen sharing will encode on the CPU; expect\n' >&2
+    printf '[hwaccel]   [OpenH264] lines below. That is the fallback working, not an error.\n' >&2
+    case "${VAINFO_DRV:-}" in
+      *NVDEC* | *nvidia*)
+        printf '[hwaccel]   nvidia-vaapi-driver wraps NVDEC only. See docs/nvenc.md.\n' >&2
+        ;;
+    esac
+  fi
+fi
+
+##############################################################################
+# 4. Assemble flags
 ##############################################################################
 FEATURES="WaylandWindowDecorations"
 [ "${HWACCEL_NO_ENCODE:-0}" = 1 ] || FEATURES="AcceleratedVideoEncoder,$FEATURES"
