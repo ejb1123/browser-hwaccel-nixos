@@ -1,0 +1,25 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Evaluates the module against every example config, so a typo in an
+      # option or a package name fails here rather than in someone's rebuild.
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+
+      - name: formatting
+        run: nix fmt -- --check .
