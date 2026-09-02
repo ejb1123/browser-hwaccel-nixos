@@ -90,6 +90,45 @@ alignment rows and columns by replicating the last real pixel. Verified by
 encoding a known pattern in hardware and decoding it in software: MAE 8.1 at
 every size, identical to the 1280×720 case that always worked.
 
+## It also fixes a decode bug, which upstream shares
+
+Worth flagging because it has nothing to do with encode: on low-latency
+WebCodecs streams, hardware decode showed the picture **jumping backwards by
+exactly three frames**, dozens of times a minute. Software decode of the same
+stream was clean. Tracing the driver against a live stream explained it:
+
+```
+vaBeginPicture / vaEndPicture   2079
+resolve-thread map + copy       2079
+vaExportSurfaceHandle             12   <- setup only
+vaSyncSurface                     12   <- setup only
+```
+
+Chromium exports the dma-bufs once, rotates through exactly **three** surfaces,
+and then never synchronises again. The copy into those buffers happens on the
+driver's resolve thread, and a CUDA write into an imported dma-buf participates
+in no implicit fencing — so nothing orders the driver's write against the
+client's read. The client samples a buffer before the new frame lands and sees
+its previous contents: one full rotation back, exactly three frames. It can only
+fail backwards, never forwards, which is what makes the artefact recognisable.
+
+Blocking in `vaEndPicture` until the copy completes closes the window. Measured
+over 35 s of 720p30, same build, toggled only by the environment variable:
+
+| | frames | distinct | regressions |
+|---|---|---|---|
+| default (fix on) | 1018 | 1018 | **0** |
+| `NVD_SYNC_DECODE=0` | 1011 | 920 | 91 |
+
+Frame counts are unchanged, so the serialisation costs no throughput at this
+resolution. Set `NVD_SYNC_DECODE=0` to restore the old behaviour if it ever
+does.
+
+**This is a mitigation, not a proper fix.** Correct behaviour needs a fence on
+the exported buffer, or enough surfaces in rotation that the race cannot be
+lost. Both are larger changes. The bug is upstream's too and is worth reporting
+there.
+
 ## What does not work
 
 **Packed headers.** The driver advertises `VAConfigAttribEncPackedHeaders`,
