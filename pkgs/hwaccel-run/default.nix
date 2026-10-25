@@ -40,10 +40,11 @@ let
     ];
   };
 
-  script = builtins.replaceStrings
-    [ "@driverdir@" "@browser@" ]
-    [ "${driverBundle}/lib/dri" "${browser}/bin/${binaryName}" ]
-    (builtins.readFile ./run.sh);
+  script =
+    builtins.replaceStrings
+      [ "@driverdir@" "@browser@" ]
+      [ "${driverBundle}/lib/dri" "${browser}/bin/${binaryName}" ]
+      (builtins.readFile ./run.sh);
 in
 writeShellApplication {
   name = "${binaryName}-hwaccel";
