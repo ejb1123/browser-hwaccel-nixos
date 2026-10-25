@@ -19,11 +19,11 @@
     "nvidia-vaapi-driver-nvenc": {
       "flake": false,
       "locked": {
-        "lastModified": 1788313438,
-        "narHash": "sha256-S4p4Ny+t5jFAubnyvdgPTz7WCEKQtAExz+xPEIa6nM4=",
+        "lastModified": 1792961532,
+        "narHash": "sha256-psQmCvEu+Ebf8GowSQCIde9tVB37WO+gYVKqdqaPt9I=",
         "owner": "ejb1123",
         "repo": "nvidia-vaapi-driver",
-        "rev": "a85ebb20a17b6feecb001ca44d1b3e4dc8e06714",
+        "rev": "be14343f28670a1ac54d222463fd39a04d5f3a6e",
         "type": "github"
       },
       "original": {
